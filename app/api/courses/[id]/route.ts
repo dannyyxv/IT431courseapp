@@ -1,30 +1,6 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import clientPromise from "@/lib/mongodb";
 import { Course } from "@/types/course";
-
-// Define the path to the JSON file
-const dataFilePath = path.join(process.cwd(), "data", "courses.json");
-
-// Helper function to read courses
-const readCourses = (): Course[] => {
-  try {
-    const jsonData = fs.readFileSync(dataFilePath, "utf-8");
-    return JSON.parse(jsonData) as Course[];
-  } catch (error) {
-    console.error("Error reading courses file:", error);
-    return [];
-  }
-};
-
-// Helper function to write courses
-const writeCourses = (courses: Course[]) => {
-  try {
-    fs.writeFileSync(dataFilePath, JSON.stringify(courses, null, 2), "utf-8");
-  } catch (error) {
-    console.error("Error writing to courses file:", error);
-  }
-};
 
 // GET: Retrieve a course by ID
 export async function GET(
@@ -42,8 +18,9 @@ export async function GET(
       );
     }
 
-    const courses = readCourses();
-    const course = courses.find((c) => c.id === courseId);
+    const client = await clientPromise;
+    const db = client.db("coursesdb");
+    const course = await db.collection("courses").findOne({ id: courseId });
 
     if (!course) {
       return NextResponse.json({ error: "Course not found." }, { status: 404 });
@@ -57,7 +34,7 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+} // <-- Add this closing bracket here
 
 // PUT: Update a course by ID
 export async function PUT(
@@ -75,18 +52,20 @@ export async function PUT(
     }
 
     const updatedCourse: Partial<Course> = await request.json();
-    const courses = readCourses();
-    const index = courses.findIndex((c) => c.id === courseId);
+    const client = await clientPromise;
+    const db = client.db("coursesdb");
 
-    if (index === -1) {
+    const result = await db.collection("courses").findOneAndUpdate(
+      { id: courseId },
+      { $set: updatedCourse },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
       return NextResponse.json({ error: "Course not found." }, { status: 404 });
     }
 
-    courses[index] = { ...courses[index], ...updatedCourse, id: courseId };
-
-    writeCourses(courses);
-
-    return NextResponse.json(courses[index], { status: 200 });
+    return NextResponse.json(result.value, { status: 200 });
   } catch (error) {
     console.error("Error updating course:", error);
     return NextResponse.json(
@@ -111,15 +90,14 @@ export async function DELETE(
       );
     }
 
-    let courses = readCourses();
-    const initialLength = courses.length;
-    courses = courses.filter((c) => c.id !== courseId);
+    const client = await clientPromise;
+    const db = client.db("coursesdb");
 
-    if (courses.length === initialLength) {
+    const result = await db.collection("courses").deleteOne({ id: courseId });
+
+    if (result.deletedCount === 0) {
       return NextResponse.json({ error: "Course not found." }, { status: 404 });
     }
-
-    writeCourses(courses);
 
     return NextResponse.json(
       { message: `Course with ID ${courseId} deleted.` },
